@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ThresholdGuard — verification that scales with ambiguity</title>
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    margin: 0 auto; max-width: 820px; padding: 2.5rem 1.25rem 4rem;
+    font: 16px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    color: #1a1a1a; background: #fff;
+  }
+  @media (prefers-color-scheme: dark) {
+    body { color: #e6e6e6; background: #14161a; }
+    a { color: #7fb3ff; }
+    th { color: #c9d1d9; border-color: #30363d; }
+    td { border-color: #30363d; }
+    code { background: #21262d; }
+    pre { background: #1c2026; border-color: #30363d; }
+    .card { background: #1c2026; border-color: #30363d; }
+  }
+  h1 { font-size: 2rem; line-height: 1.25; margin: 0 0 .25rem; letter-spacing: -.02em; }
+  h2 { font-size: 1.25rem; margin: 2.75rem 0 .75rem; letter-spacing: -.01em; }
+  p { margin: .75rem 0; }
+  a { color: #0b63d6; }
+  .sub { color: #666; font-size: 1.05rem; margin-top: 0; }
+  code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .875em; }
+  code { background: #f2f3f5; padding: .12em .38em; border-radius: 4px; }
+  pre { background: #f6f7f9; border: 1px solid #e2e4e8; border-radius: 8px; padding: .9rem 1rem; overflow-x: auto; }
+  pre code { background: none; padding: 0; }
+  table { width: 100%; border-collapse: collapse; margin: .75rem 0; font-size: .94rem; }
+  th, td { text-align: left; padding: .55rem .65rem; border-bottom: 1px solid #e2e4e8; vertical-align: top; }
+  th { font-weight: 600; }
+  .card { border: 1px solid #e2e4e8; border-radius: 10px; padding: 1rem 1.15rem; margin: 1.25rem 0; background: #fafbfc; }
+  .addr { word-break: break-all; }
+  .muted { color: #777; font-size: .875rem; }
+  ol, ul { padding-left: 1.25rem; }
+  li { margin: .35rem 0; }
+</style>
+</head>
+<body>
+
+<h1>ThresholdGuard</h1>
+<p class="sub">Verification that scales with ambiguity. Settled early, escalated near the limit, inconclusive when it stays unclear.</p>
+
+<div class="card">
+  <p><strong>Bradbury contract</strong><br>
+  <a class="addr" href="https://explorer-bradbury.genlayer.com/address/0x3422dA233c38c75d22Baa96b858d43649e177733">0x3422dA233c38c75d22Baa96b858d43649e177733</a></p>
+  <p class="muted">Source, tests and the full write-up live in the repository linked below.</p>
+</div>
+
+<h2>The question is different</h2>
+<p>Most verification asks <em>is this true?</em> This one asks
+<strong><em>how far from the limit is it?</em></strong> That is the question you
+need when a false <code>PASS</code> is expensive: an SLA cap, a latency budget,
+a concentration limit, an emissions ceiling.</p>
+
+<h2>The decision</h2>
+<p>Readings from the tier's sources give <code>low</code>, <code>high</code> and
+<code>spread</code>. They are trusted only when enough independent sources agree
+<em>and</em> agree tightly enough:</p>
+
+<pre><code>trustworthy = n &gt;= min_agree[tier]  and  spread &lt;= grey</code></pre>
+
+<table>
+  <tr><th>direction</th><th>PASS</th><th>FAIL</th><th>otherwise</th></tr>
+  <tr><td><code>MAX</code> (a cap)</td><td><code>high &lt;= threshold</code></td><td><code>low &gt; threshold</code></td><td>straddles &rarr; escalate</td></tr>
+  <tr><td><code>MIN</code> (a floor)</td><td><code>low &gt;= threshold</code></td><td><code>high &lt; threshold</code></td><td>straddles &rarr; escalate</td></tr>
+</table>
+
+<p>A <code>PASS</code> needs <em>even the worst reading</em> to clear the limit;
+a <code>FAIL</code> needs <em>even the best reading</em> to breach it. Anything
+in between gets more work, not a coin flip. The <code>margin</code> reports how
+far from the boundary the decision landed.</p>
+
+<h2>The ladder</h2>
+<p>Up to three tiers of sources, assessed after every read, so the check settles
+the moment the evidence becomes decisive:</p>
+
+<pre><code>tier 1  decisive? -> PASS / FAIL     else ESCALATED
+tier 2  decisive? -> PASS / FAIL     else ESCALATED
+tier 3  decisive? -> PASS / FAIL     else INCONCLUSIVE</code></pre>
+
+<p><code>INCONCLUSIVE</code> is a real answer: <em>this evidence cannot settle
+it.</em></p>
+
+<h2>What counts as a measurement</h2>
+<p>The model is asked one narrow question &mdash; what value of FIELD, in UNIT,
+does this page report? &mdash; and nothing else calls a model. A reading is
+dropped, with a reason, unless all of these hold:</p>
+
+<table>
+  <tr><th>check</th><th>rejects</th></tr>
+  <tr><td>value stated</td><td><code>not_stated</code></td></tr>
+  <tr><td>value parses as a number</td><td><code>not_numeric</code></td></tr>
+  <tr><td>unit matches the check</td><td><code>wrong_unit</code></td></tr>
+  <tr><td>number occurs in the page as a whole token</td><td><code>not_in_source</code></td></tr>
+  <tr><td>unit is written in the page</td><td><code>unit_not_in_source</code></td></tr>
+</table>
+
+<p>Whole-token matching is what stops <code>50</code> from being confirmed by a
+page that says <code>1500</code>. A rejected reading is not a failure &mdash; the
+tier simply cannot reach its bar from that source, and moves on.</p>
+
+<h2>Contract surface</h2>
+<table>
+  <tr><th>method</th><th>kind</th><th>purpose</th></tr>
+  <tr><td><code>open_check</code></td><td>write</td><td>register a threshold to watch</td></tr>
+  <tr><td><code>read</code></td><td>write</td><td>one fetch, one measurement, then assess</td></tr>
+  <tr><td><code>close_check</code></td><td>write</td><td>owner retires the check</td></tr>
+  <tr><td><code>get_check</code> / <code>get_reading</code> / <code>get_readings</code></td><td>view</td><td>verdict, margin, spread, tier reached</td></tr>
+</table>
+
+<h2>How to verify</h2>
+<ol>
+  <li>Open the Bradbury Explorer link above and read <code>get_check("1")</code>.</li>
+  <li>Read <code>get_readings("1", 0)</code> to see each measurement and whether it was accepted.</li>
+  <li>Clone the repository and run <code>python -m pytest tests/direct -q</code>.</li>
+</ol>
+
+<p class="muted">46 direct-mode tests covering creation validation, evidence rejection, the margin and grey-zone rules, escalation and the INCONCLUSIVE terminal.</p>
+
+</body>
+</html>
