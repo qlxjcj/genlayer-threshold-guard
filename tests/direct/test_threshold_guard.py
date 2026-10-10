@@ -201,6 +201,31 @@ def test_unstated_value_is_not_a_measurement(guard):
     assert res["value"] is None and res["rejected"] == "not_stated"
 
 
+def test_a_percentage_value_is_anchored_before_the_sign(guard):
+    """70.8 in '70.8%' must be accepted: % is a unit suffix, not part of the
+    number. Without this every percentage reading is thrown away."""
+    remock_spec = [("metrics-a.", "SPEC-A1", "SPEC-A1. coverage: 70.8% of the crust.",
+                    json.dumps({"value": "70.8", "unit": "%"}))]
+    vm, c = guard
+    remock(vm, spec=remock_spec)
+    cid = open_check(vm, c, field="coverage", unit="%", threshold="80",
+                     tiers=[[URL_A, URL_B]])
+    res = json.loads(c.read(cid, 0, 0))
+    assert res["value"] == 70.8 and res["rejected"] == ""
+
+
+def test_a_prefix_of_a_decimal_is_still_rejected(guard):
+    """70 must not be anchored by 70.8: the dot keeps the number whole."""
+    remock_spec = [("metrics-a.", "SPEC-A1", "SPEC-A1. coverage: 70.8% of the crust.",
+                    json.dumps({"value": "70", "unit": "%"}))]
+    vm, c = guard
+    remock(vm, spec=remock_spec)
+    cid = open_check(vm, c, field="coverage", unit="%", threshold="80",
+                     tiers=[[URL_A, URL_B]])
+    res = json.loads(c.read(cid, 0, 0))
+    assert res["value"] is None and res["rejected"] == "not_in_source"
+
+
 def test_a_leading_zero_form_is_still_found(guard):
     """The page writes 82; a model answering 82.0 must still be anchored."""
     remock_spec = [("metrics-a.", "SPEC-A1", "SPEC-A1. latency: 82 ms.",

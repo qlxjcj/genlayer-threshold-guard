@@ -114,8 +114,10 @@ class ThresholdGuard(gl.Contract):
 
     def _word_char(self, c: str) -> bool:
         if not c:
-            return False        # "" in "._%" is True in Python; an edge is a boundary
-        return ("a" <= c <= "z") or ("A" <= c <= "Z") or ("0" <= c <= "9") or c in "._%"
+            return False        # "" in "._" is True in Python; an edge is a boundary
+        # "%" is deliberately absent: it is a unit suffix, so "70.8" is anchored
+        # by "70.8%". A "." stays, so "70" is still not anchored by "70.8".
+        return ("a" <= c <= "z") or ("A" <= c <= "Z") or ("0" <= c <= "9") or c in "._"
 
     def _num_forms(self, s: str) -> list:
         out = [s.strip()]
@@ -311,6 +313,7 @@ class ThresholdGuard(gl.Contract):
             "tier_state": "GATHERING",
             "tier_reached": 0,
             "readings_this_tier": 0,
+            "filled_this_tier": 0,
             "low": None,
             "high": None,
             "spread": None,
