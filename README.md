@@ -128,6 +128,30 @@ python -m pytest tests/direct -q
   taking reads
 - **ownership / views**: owner-only close, double close, ordering, unknown keys
 
+## Live on chain
+
+Two checks were run end to end on Bradbury against two real Wikipedia sources
+(`Earth` and `Ocean`, both publishing `70.8%`), with `grey = 1`:
+
+```
+cap 80%   PASS   low 70.8  high 70.8  spread 0   margin 9.2   "settled at tier 1"
+cap 60%   FAIL   low 70.8  high 70.8  spread 0   margin 10.8  "settled at tier 1"
+```
+
+Both sources yielded `70.8`, accepted as a whole token in front of the `%` sign,
+so the spread is zero and the check settles on the first tier without spending a
+second one. The margin is how far the verdict landed from the boundary — 9.2
+clearance for the loose cap, 10.8 over the line for the tight one.
+
+Eleven input-validation gates were exercised live and every one of them reverted
+as designed:
+
+```
+zero grey · bad direction · non-numeric threshold · duplicate across tiers
+min_agree decreasing · min_agree too big · non-http source · duplicate within tier
+read unknown check · close unknown check   (close by owner accepted)
+```
+
 ## Contract surface
 
 | Method | Kind | Purpose |
