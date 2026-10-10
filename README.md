@@ -6,7 +6,7 @@ through a grey zone, and spends more verification **only when the evidence sits
 near the boundary**. A clear reading settles it early; an ambiguous one climbs
 the ladder; one that never clears is reported `INCONCLUSIVE` rather than guessed.
 
-Bradbury testnet: `0x510C1EaCF173f9BF913ea11faCe3a08F50c77A66`
+Bradbury testnet: `0x980f39e11Ca52Ec131bF07c50A760EC673391bf8`
 
 ---
 
@@ -111,7 +111,7 @@ by readings accepted.
 python -m pytest tests/direct -q
 ```
 
-48 direct-mode tests:
+49 direct-mode tests:
 
 - **creation**: blank and oversized subject / field / unit, non-numeric threshold,
   bad direction, bad grey zone, tier count and size bounds, non-`http` sources,

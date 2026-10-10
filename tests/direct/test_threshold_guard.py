@@ -424,7 +424,7 @@ def test_readings_are_returned_in_order(guard):
     vm, c = guard
     cid = open_check(vm, c)
     read_all(vm, c, cid, 0, [1, 0])
-    got = c.get_readings(cid, 0)
+    got = json.loads(c.get_readings(cid, 0))
     assert [r["source_index"] for r in got] == [0, 1]
     assert [r["value"] for r in got] == [80.0, 82.0]
 
@@ -433,9 +433,21 @@ def test_unknown_keys_read_as_empty(guard):
     vm, c = guard
     assert c.get_check("42") == "{}"
     assert c.get_reading("42", 0, 0) == "{}"
-    assert c.get_readings("42", 0) == []
-    assert c.get_readings("1", 9) == []
+    assert json.loads(c.get_readings("42", 0)) == []
+    assert json.loads(c.get_readings("1", 9)) == []
     assert c.get_check_count() == 0
+
+
+def test_views_never_return_a_bare_float(guard):
+    """GenVM calldata cannot encode float. Every view must hand back text, or
+    the call fails on chain while direct-mode tests stay green."""
+    vm, c = guard
+    cid = open_check(vm, c)
+    read_all(vm, c, cid, 0, [0, 1])
+    assert isinstance(c.get_check(cid), str)
+    assert isinstance(c.get_reading(cid, 0, 0), str)
+    assert isinstance(c.get_readings(cid, 0), str)
+    assert json.loads(c.get_check(cid))["margin"] == 18.0
 
 
 def test_full_lifecycle_end_to_end(guard):
@@ -448,5 +460,5 @@ def test_full_lifecycle_end_to_end(guard):
     assert rec["state"] == "PASS"
     assert rec["tier_reached"] == 2
     assert rec["margin"] == 18.0
-    assert len(c.get_readings(cid, 0)) == 2
-    assert len(c.get_readings(cid, 1)) == 2
+    assert len(json.loads(c.get_readings(cid, 0))) == 2
+    assert len(json.loads(c.get_readings(cid, 1))) == 2

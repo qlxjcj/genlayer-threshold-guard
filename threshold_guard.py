@@ -211,7 +211,7 @@ class ThresholdGuard(gl.Contract):
 
         low, high = min(vals), max(vals)
         spread = high - low
-        c["low"], c["high"], c["spread"] = low, high, spread
+        c["low"], c["high"], c["spread"] = round(low, 6), round(high, 6), round(spread, 6)
 
         threshold = float(c["threshold"])
         grey = float(c["grey"])
@@ -233,7 +233,7 @@ class ThresholdGuard(gl.Contract):
         if verdict:
             c["state"] = verdict
             c["verdict"] = verdict
-            c["margin"] = margin
+            c["margin"] = round(margin, 6)
             c["tier_reached"] = tier + 1
             c["note"] = "settled at tier " + str(tier + 1)
             c["resolved_at"] = str(self._now())
@@ -414,19 +414,21 @@ class ThresholdGuard(gl.Contract):
         return self.reads.get(self._rkey(str(check_id), int(tier), int(source_index)), "{}")
 
     @gl.public.view
-    def get_readings(self, check_id: str, tier: int) -> list:
+    def get_readings(self, check_id: str, tier: int) -> str:
+        """JSON text, like every other view: GenVM calldata cannot encode float,
+        so a bare list of records would fail to serialise on chain."""
         c = json.loads(self.checks.get(str(check_id), "{}"))
         if not c:
-            return []
+            return "[]"
         t = int(tier)
         if t < 0 or t >= len(c["tiers"]):
-            return []
+            return "[]"
         out = []
         for i in range(len(c["tiers"][t])):
             raw = self.reads.get(self._rkey(str(check_id), t, i), "")
             if raw:
                 out.append(json.loads(raw))
-        return out
+        return json.dumps(out)
 
     @gl.public.view
     def get_check_count(self) -> int:
