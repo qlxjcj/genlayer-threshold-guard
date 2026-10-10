@@ -152,6 +152,28 @@ min_agree decreasing · min_agree too big · non-http source · duplicate within
 read unknown check · close unknown check   (close by owner accepted)
 ```
 
+The ladder itself was demonstrated live too. A third check asked for **three**
+agreeing sources (`min_agree = 3`) over `Earth`, `Ocean` and `Mars`, then `Venus`,
+`Mercury` and `Sun`:
+
+```
+tier 0   src0 70.8 accepted   src1 70.8 accepted   src2 not_stated
+         n=2 < min_agree=3, slots full -> ESCALATED
+tier 1   src0 not_stated      src1 not_stated      src2 not_stated
+         n=0, last tier exhausted -> INCONCLUSIVE
+```
+
+```
+state INCONCLUSIVE  tier_reached 2  note "no tier settled it"
+```
+
+Two things are worth noticing. `Mars` does not state an ocean coverage at all,
+so its reading is **rejected rather than counted** — and because escalation is
+driven by slots filled rather than readings accepted, the tier moves on instead
+of waiting forever for a third measurement that will never come. And at the end
+the contract says `INCONCLUSIVE` rather than averaging two readings and calling
+it three.
+
 ## Contract surface
 
 | Method | Kind | Purpose |
