@@ -199,6 +199,21 @@ outcome are the same as before (whole-token presence, unit match, `min_agree`,
 grey zone), and `INCONCLUSIVE` remains the answer when the evidence does not
 settle the question.
 
+
+### The two gates are enforced on chain
+
+Both were exercised live and refused exactly as designed:
+
+```
+read by an unlisted reader  -> FINISHED_WITH_ERROR   "Not an authorised reader"
+reject_reading by a non-owner -> FINISHED_WITH_ERROR "Owner only"
+after 2 of 3 sources        -> state OPEN, tier_state GATHERING   not judged
+```
+
+The third line is the early-settlement fix working: with sources still unread the
+check stays `GATHERING` and carries no verdict, so a partial tier can never
+become a verdict by accident.
+
 ## Contract surface
 
 | Method | Kind | Purpose |
