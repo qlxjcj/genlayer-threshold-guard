@@ -107,13 +107,14 @@ def guard(direct_vm, direct_deploy):
 
 def open_check(vm, c, subject="Is the p99 latency under the SLA cap?", field=FIELD,
                unit=UNIT, threshold="100", direction="MAX", grey="5",
-               tiers=None, min_agree=None):
+               tiers=None, min_agree=None, policy="OPEN"):
     if tiers is None:
         tiers = [[URL_A, URL_B]]
     if min_agree is None:
         min_agree = [2]
     vm.sender = OWNER
-    return c.open_check(subject, field, unit, threshold, direction, grey, tiers, min_agree)
+    return c.open_check(subject, field, unit, threshold, direction, grey,
+                        tiers, min_agree, policy)
 
 
 def read_all(vm, c, cid, tier, indices):

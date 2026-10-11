@@ -8,6 +8,7 @@ MAX_UNIT = 20
 MAX_VALUE_LEN = 60
 MAX_TIERS = 3
 MAX_PER_TIER = 5
+MAX_READERS = 16
 MAX_BODY_CHARS = 6000
 
 OPEN = "OPEN"
@@ -21,11 +22,8 @@ FLOOR = "MIN"
 
 
 class ThresholdGuard(gl.Contract):
-    """Some checks only matter near a limit. This reads a measurement off a set of
-    sources, compares it with a posted threshold through a grey zone, and spends
-    more verification only when the evidence sits near the boundary. A clear
-    reading settles it early; an ambiguous one climbs the ladder; one that never
-    clears is reported INCONCLUSIVE rather than guessed."""
+    """Reads a measurement off a set of sources, compares it with a threshold through
+    a grey zone, and escalates only when the evidence sits near the boundary."""
 
     checks: TreeMap[str, str]
     reads: TreeMap[str, str]
@@ -98,8 +96,7 @@ class ThresholdGuard(gl.Contract):
             return None
 
     def _numeric_token(self, body: str, token: str) -> bool:
-        """The number must occur in the page as a whole token, so 50 is not
-        satisfied by 500 nor by 1500."""
+        """Whole token, so 50 is not satisfied by 500 nor by 1500."""
         if not token or not body:
             return False
         n = len(token)
@@ -138,7 +135,7 @@ class ThresholdGuard(gl.Contract):
 
     def _url_list(self, v, what: str) -> list:
         if not isinstance(v, list) or len(v) == 0 or len(v) > MAX_PER_TIER:
-            raise gl.vm.UserError(what + " must be 1.." + str(MAX_PER_TIER) + " urls")
+            raise gl.vm.UserError(what + " must be 1..5 urls")
         out = []
         for u in v:
             if not isinstance(u, str) or not (u.startswith("http://") or u.startswith("https://")):
@@ -153,8 +150,7 @@ class ThresholdGuard(gl.Contract):
     # ---------------- the model's only job ----------------
 
     def _extract(self, url: str, field: str, unit: str) -> dict:
-        """One narrow question: what measurement does this page report? The answer
-        is then checked against the page text and against the stated unit."""
+        """One narrow question: what measurement does this page report?"""
         def check() -> dict:
             body = ""
             try:
@@ -182,9 +178,7 @@ class ThresholdGuard(gl.Contract):
     # ---------------- deterministic assessment ----------------
 
     def _assess(self, c: dict) -> dict:
-        """Pure computation over the readings already stored. Decides whether the
-        evidence is trustworthy and, if so, which side of the threshold it falls
-        on. Otherwise it escalates, or gives up without inventing an answer."""
+        """Pure computation over stored readings: trusted? which side? or escalate."""
         tier = int(c["tier"])
         names = c["tiers"][tier]
         vals = []
@@ -201,12 +195,13 @@ class ThresholdGuard(gl.Contract):
         c["readings_this_tier"] = n
         c["filled_this_tier"] = filled
 
+        # A tier is judged only when complete: the unread sources are exactly the
+        # ones that could widen the spread and force an escalation.
+        if filled < len(names):
+            c["tier_state"] = "GATHERING"
+            return c
+
         if n < need:
-            # A tier that is fully read but still short of usable measurements can
-            # never decide, so it must move on rather than stall here.
-            if filled < len(names):
-                c["tier_state"] = "GATHERING"
-                return c
             return self._escalate(c, tier)
 
         low, high = min(vals), max(vals)
@@ -239,10 +234,7 @@ class ThresholdGuard(gl.Contract):
             c["resolved_at"] = str(self._now())
             return c
 
-        if filled >= len(names):
-            return self._escalate(c, tier)
-        c["tier_state"] = "GATHERING"
-        return c
+        return self._escalate(c, tier)
 
     def _escalate(self, c: dict, tier: int) -> dict:
         if tier + 1 < len(c["tiers"]):
@@ -261,7 +253,8 @@ class ThresholdGuard(gl.Contract):
 
     @gl.public.write
     def open_check(self, subject: str, field: str, unit: str, threshold: str,
-                   direction: str, grey: str, tiers: list, min_agree: list) -> str:
+                   direction: str, grey: str, tiers: list, min_agree: list,
+                   policy: str) -> str:
         if not isinstance(subject, str) or not subject.strip() or len(subject) > MAX_SUBJECT:
             raise gl.vm.UserError("Subject required and short")
         if not isinstance(field, str) or not field.strip() or len(field) > MAX_FIELD:
@@ -274,18 +267,18 @@ class ThresholdGuard(gl.Contract):
             raise gl.vm.UserError("Direction must be MAX or MIN")
         grey_n = self._to_num(grey)
         if grey_n is None or grey_n <= 0:
-            raise gl.vm.UserError("Grey zone must be numeric and positive")
+            raise gl.vm.UserError("Grey zone must be positive")
         if not isinstance(tiers, list) or len(tiers) == 0 or len(tiers) > MAX_TIERS:
-            raise gl.vm.UserError("Tiers must be 1.." + str(MAX_TIERS))
+            raise gl.vm.UserError("Tiers must be 1..3")
         tiers = [self._url_list(t, "tier") for t in tiers]
         seen = []
         for t in tiers:
             for u in t:
                 if u in seen:
-                    raise gl.vm.UserError("Sources must be unique across tiers")
+                    raise gl.vm.UserError("Sources must be unique")
                 seen.append(u)
         if not isinstance(min_agree, list) or len(min_agree) != len(tiers):
-            raise gl.vm.UserError("min_agree must match the tier count")
+            raise gl.vm.UserError("min_agree must match tiers")
         agreed = []
         for idx, t in enumerate(tiers):
             k = min_agree[idx]
@@ -294,6 +287,8 @@ class ThresholdGuard(gl.Contract):
             if agreed and k < agreed[-1]:
                 raise gl.vm.UserError("min_agree must not decrease")
             agreed.append(k)
+        if policy != "OPEN" and policy != "CURATED":
+            raise gl.vm.UserError("Policy must be OPEN or CURATED")
 
         self.check_count += 1
         cid = str(self.check_count)
@@ -307,6 +302,8 @@ class ThresholdGuard(gl.Contract):
             "grey": grey_n,
             "tiers": tiers,
             "min_agree": agreed,
+            "policy": policy,
+            "readers": [],
             "owner": self._addr_hex(gl.message.sender_address),
             "state": OPEN,
             "tier": 0,
@@ -327,8 +324,7 @@ class ThresholdGuard(gl.Contract):
 
     @gl.public.write
     def read(self, check_id: str, tier: int, source_index: int) -> str:
-        """One fetch, one measurement. The assessment runs on what is already
-        stored and settles early as soon as the evidence is decisive."""
+        """One fetch, one measurement, then assess the tier if it is now complete."""
         cid = str(check_id)
         c = json.loads(self.checks.get(cid, "{}"))
         if not c:
@@ -338,6 +334,11 @@ class ThresholdGuard(gl.Contract):
         t = int(tier)
         if t != int(c["tier"]):
             raise gl.vm.UserError("Not the current tier")
+        who = self._addr_hex(gl.message.sender_address).lower()
+        if c["policy"] == "CURATED":
+            readers = [r.lower() for r in c.get("readers", [])]
+            if who != str(c["owner"]).lower() and who not in readers:
+                raise gl.vm.UserError("Not an authorised reader")
         idx = int(source_index)
         names = c["tiers"][t]
         if idx < 0 or idx >= len(names):
@@ -375,6 +376,7 @@ class ThresholdGuard(gl.Contract):
 
         self.reads[self._rkey(cid, t, idx)] = json.dumps({
             "check_id": cid, "tier": t, "source_index": idx, "url": names[idx],
+            "reader": who,
             "value": num if not reason else None,
             "raw_value": value, "raw_unit": unit, "rejected": reason,
             "read_at": str(self._now()),
@@ -384,6 +386,66 @@ class ThresholdGuard(gl.Contract):
         self.checks[cid] = json.dumps(c)
         return json.dumps({"value": num if not reason else None,
                            "rejected": reason, "state": c["state"]})
+
+    @gl.public.write
+    def set_reader(self, check_id: str, addr: str, allowed: bool) -> str:
+        """Trust policy: who may supply evidence when the check is CURATED."""
+        cid = str(check_id)
+        c = json.loads(self.checks.get(cid, "{}"))
+        if not c:
+            raise gl.vm.UserError("Check not found")
+        if c["state"] != OPEN:
+            raise gl.vm.UserError("Check already resolved")
+        if self._addr_hex(gl.message.sender_address).lower() != str(c["owner"]).lower():
+            raise gl.vm.UserError("Owner only")
+        who = self._addr_hex(addr).lower()
+        if not (who.startswith("0x") and len(who) == 42):
+            raise gl.vm.UserError("Reader must be an address")
+        readers = [r.lower() for r in c.get("readers", [])]
+        if allowed:
+            if who in readers:
+                raise gl.vm.UserError("Already a reader")
+            if len(readers) >= MAX_READERS:
+                raise gl.vm.UserError("Too many readers")
+            readers.append(who)
+        else:
+            if who not in readers:
+                raise gl.vm.UserError("Not a reader")
+            readers.remove(who)
+        c["readers"] = readers
+        self.checks[cid] = json.dumps(c)
+        return "ok"
+
+    @gl.public.write
+    def reject_reading(self, check_id: str, tier: int, source_index: int, reason: str) -> str:
+        """Trust policy: strike a reading that should not count, while still open."""
+        cid = str(check_id)
+        c = json.loads(self.checks.get(cid, "{}"))
+        if not c:
+            raise gl.vm.UserError("Check not found")
+        if c["state"] != OPEN:
+            raise gl.vm.UserError("Check already resolved")
+        if self._addr_hex(gl.message.sender_address).lower() != str(c["owner"]).lower():
+            raise gl.vm.UserError("Owner only")
+        if not isinstance(reason, str) or not reason.strip() or len(reason) > MAX_SUBJECT:
+            raise gl.vm.UserError("Reason required")
+        t = int(tier)
+        if t != int(c["tier"]):
+            raise gl.vm.UserError("Not the current tier")
+        key = self._rkey(cid, t, int(source_index))
+        raw = self.reads.get(key, "")
+        if not raw:
+            raise gl.vm.UserError("No reading to reject")
+        rec = json.loads(raw)
+        if rec.get("value") is None:
+            raise gl.vm.UserError("Reading already rejected")
+        rec["value"] = None
+        rec["rejected"] = "owner_rejected"
+        rec["reject_reason"] = reason.strip()
+        self.reads[key] = json.dumps(rec)
+        c = self._assess(c)
+        self.checks[cid] = json.dumps(c)
+        return "ok"
 
     @gl.public.write
     def close_check(self, check_id: str) -> str:

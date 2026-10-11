@@ -462,3 +462,145 @@ def test_full_lifecycle_end_to_end(guard):
     assert rec["margin"] == 18.0
     assert len(json.loads(c.get_readings(cid, 0))) == 2
     assert len(json.loads(c.get_readings(cid, 1))) == 2
+
+
+def test_policy_must_be_open_or_curated(guard):
+    vm, c = guard
+    with pytest.raises(Exception):
+        open_check(vm, c, policy="ANYONE")
+
+
+# ------------------------- G: no verdict on a partial tier (early settlement)
+
+
+def test_a_tier_is_not_judged_before_it_is_fully_read(guard):
+    """Reading two of three sources must not settle anything: the unread source
+    is exactly the one that could widen the spread and force an escalation."""
+    vm, c = guard
+    cid = open_check(vm, c, tiers=[[URL_A, URL_B, URL_C]], min_agree=[2])
+    read_all(vm, c, cid, 0, [0, 1])          # 80 and 82, tempting to call PASS
+    rec = json.loads(c.get_check(cid))
+    assert rec["state"] == "OPEN"
+    assert rec["tier_state"] == "GATHERING"
+    assert rec["tier_reached"] == 0
+    assert rec["verdict"] == ""
+
+
+def test_the_third_source_is_considered_before_any_verdict(guard):
+    """98 widens the spread past the grey zone, so the tier that looked settled
+    has to escalate instead."""
+    vm, c = guard
+    cid = open_check(vm, c, tiers=[[URL_A, URL_B, URL_C], [URL_D, URL_E, URL_F]],
+                     min_agree=[2, 2])
+    read_all(vm, c, cid, 0, [0, 1])
+    assert json.loads(c.get_check(cid))["state"] == "OPEN"
+    read_all(vm, c, cid, 0, [2])
+    rec = json.loads(c.get_check(cid))
+    assert rec["state"] == "OPEN"
+    assert rec["tier"] == 1 and rec["tier_state"] == "ESCALATED"
+
+
+def test_a_complete_tier_still_settles(guard):
+    vm, c = guard
+    cid = open_check(vm, c, tiers=[[URL_A, URL_B, URL_G]], min_agree=[2], grey="20")
+    read_all(vm, c, cid, 0, [0, 1, 2])       # 80, 82, 96 -> spread 16 <= grey 20
+    rec = json.loads(c.get_check(cid))
+    assert rec["state"] == "PASS"
+    assert rec["low"] == 80.0 and rec["high"] == 96.0 and rec["spread"] == 16.0
+    assert rec["tier_reached"] == 1 and rec["margin"] == 4.0
+
+
+# -------------------------------------------------- H: trust policy on evidence
+
+
+def test_open_policy_accepts_any_reader(guard):
+    vm, c = guard
+    cid = open_check(vm, c, policy="OPEN")
+    vm.sender = STRANGER
+    assert json.loads(c.read(cid, 0, 0))["value"] == 80.0
+
+
+def test_curated_policy_rejects_an_unlisted_reader(guard):
+    vm, c = guard
+    cid = open_check(vm, c, policy="CURATED")
+    vm.sender = STRANGER
+    with pytest.raises(Exception):
+        c.read(cid, 0, 0)
+
+
+def test_curated_policy_accepts_a_listed_reader(guard):
+    vm, c = guard
+    cid = open_check(vm, c, policy="CURATED")
+    vm.sender = OWNER
+    c.set_reader(cid, STRANGER, True)
+    vm.sender = STRANGER
+    assert json.loads(c.read(cid, 0, 0))["value"] == 80.0
+
+
+def test_a_reader_can_be_withdrawn(guard):
+    vm, c = guard
+    cid = open_check(vm, c, policy="CURATED")
+    vm.sender = OWNER
+    c.set_reader(cid, STRANGER, True)
+    c.set_reader(cid, STRANGER, False)
+    vm.sender = STRANGER
+    with pytest.raises(Exception):
+        c.read(cid, 0, 0)
+
+
+def test_only_the_owner_sets_readers(guard):
+    vm, c = guard
+    cid = open_check(vm, c, policy="CURATED")
+    vm.sender = STRANGER
+    with pytest.raises(Exception):
+        c.set_reader(cid, STRANGER, True)
+
+
+def test_reader_management_rejects_bad_input(guard):
+    vm, c = guard
+    cid = open_check(vm, c, policy="CURATED")
+    vm.sender = OWNER
+    with pytest.raises(Exception):
+        c.set_reader(cid, "not-an-address", True)
+    with pytest.raises(Exception):
+        c.set_reader(cid, STRANGER, False)        # not on the list
+    c.set_reader(cid, STRANGER, True)
+    with pytest.raises(Exception):
+        c.set_reader(cid, STRANGER, True)         # already there
+
+
+def test_every_reading_records_who_supplied_it(guard):
+    vm, c = guard
+    cid = open_check(vm, c)
+    vm.sender = STRANGER
+    c.read(cid, 0, 0)
+    rec = json.loads(c.get_reading(cid, 0, 0))
+    assert rec["reader"] == STRANGER.lower()
+
+
+def test_only_the_owner_can_strike_a_reading(guard):
+    vm, c = guard
+    cid = open_check(vm, c, tiers=[[URL_A, URL_B, URL_G]], min_agree=[2])
+    read_all(vm, c, cid, 0, [0])             # still gathering, so rejection is legal
+    assert json.loads(c.get_check(cid))["state"] == "OPEN"
+    vm.sender = STRANGER
+    with pytest.raises(Exception):
+        c.reject_reading(cid, 0, 0, "wrong metric")
+
+
+def test_striking_a_reading_removes_it_from_the_evidence(guard):
+    vm, c = guard
+    cid = open_check(vm, c, tiers=[[URL_A, URL_B, URL_G]], min_agree=[2])
+    read_all(vm, c, cid, 0, [0])
+    vm.sender = OWNER
+    with pytest.raises(Exception):
+        c.reject_reading(cid, 0, 5, "no such reading")
+    with pytest.raises(Exception):
+        c.reject_reading(cid, 0, 0, "")
+    c.reject_reading(cid, 0, 0, "wrong metric")
+    rec = json.loads(c.get_reading(cid, 0, 0))
+    assert rec["value"] is None and rec["rejected"] == "owner_rejected"
+    assert rec["reject_reason"] == "wrong metric"
+    with pytest.raises(Exception):
+        c.reject_reading(cid, 0, 0, "again")
+    assert json.loads(c.get_check(cid))["filled_this_tier"] == 1

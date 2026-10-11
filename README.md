@@ -6,7 +6,7 @@ through a grey zone, and spends more verification **only when the evidence sits
 near the boundary**. A clear reading settles it early; an ambiguous one climbs
 the ladder; one that never clears is reported `INCONCLUSIVE` rather than guessed.
 
-Bradbury testnet: `0x980f39e11Ca52Ec131bF07c50A760EC673391bf8`
+Bradbury testnet: `0x5520149D1E0F1d0172ed0F42b4faaA4702FA5898`
 
 ---
 
@@ -55,9 +55,10 @@ which.
 ## The ladder
 
 A check is opened with up to three tiers of sources and a `min_agree` per tier.
-The contract reads sources one at a time and **assesses after every read**, so it
-settles as soon as the evidence becomes decisive — it never collects more than it
-needs.
+The contract reads sources one at a time and **judges a tier only once every
+source in it has been read**. Settling on a partial tier would silently ignore
+the unread sources, and those are exactly the ones that could widen the spread
+and force an escalation.
 
 ```
 tier 1  read sources one by one   decisive? -> PASS / FAIL (done)
@@ -111,7 +112,7 @@ by readings accepted.
 python -m pytest tests/direct -q
 ```
 
-49 direct-mode tests:
+62 direct-mode tests:
 
 - **creation**: blank and oversized subject / field / unit, non-numeric threshold,
   bad direction, bad grey zone, tier count and size bounds, non-`http` sources,
@@ -174,12 +175,38 @@ of waiting forever for a third measurement that will never come. And at the end
 the contract says `INCONCLUSIVE` rather than averaging two readings and calling
 it three.
 
+
+## Trust policy over the evidence
+
+Two weaknesses are closed here.
+
+**Who may supply evidence.** A check is opened with `policy` set to `OPEN` or
+`CURATED`. Under `CURATED` only the addresses the owner has listed may call
+`read`, and the owner can withdraw one at any time while the check is open. The
+owner is always allowed.
+
+**Who did supply it.** Every reading records the `reader` address that produced
+it, so the evidence carries an audit trail.
+
+**What counts.** While the check is still open the owner may
+`reject_reading(check_id, tier, i, reason)` to strike a reading that should not
+count — a source that turned out to be unreliable, or a measurement that was
+misread. The tier is then re-assessed from what is left, and the reading keeps
+the reason it was struck.
+
+None of this can be used to manufacture a verdict: the checks that decide the
+outcome are the same as before (whole-token presence, unit match, `min_agree`,
+grey zone), and `INCONCLUSIVE` remains the answer when the evidence does not
+settle the question.
+
 ## Contract surface
 
 | Method | Kind | Purpose |
 |---|---|---|
 | `open_check(subject, field, unit, threshold, direction, grey, tiers, min_agree)` | write | register a threshold to watch |
-| `read(check_id, tier, source_index)` | write | one fetch, one measurement, then assess |
+| `read(check_id, tier, source_index)` | write | one fetch, one measurement, then assess a complete tier |
+| `set_reader(check_id, addr, allowed)` | write | trust policy: who may supply evidence |
+| `reject_reading(check_id, tier, i, reason)` | write | trust policy: strike a reading that should not count |
 | `close_check(check_id)` | write | owner retires the check |
 | `get_check(check_id)` | view | verdict, margin, spread, tier reached, state |
 | `get_reading(check_id, tier, i)` | view | one measurement and why it was accepted or not |
